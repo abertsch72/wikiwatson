@@ -1,0 +1,11 @@
+
+Read paper
+Meet with professor
+separate pages out
+look at data cleaning
+index documents
+implement retrieval
+measure performance
+error analysis
+discuss results
+optional: add NLP/ML component, writeup
