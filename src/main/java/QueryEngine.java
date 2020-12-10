@@ -51,6 +51,7 @@ public class QueryEngine {
 
         if(!indexExists) buildIndex();
         else {
+            // load the index from disk
             try{
                 Directory indexDirectory = FSDirectory.open(Paths.get(indexFolder));
                 IndexReader reader = DirectoryReader.open(indexDirectory);
@@ -65,12 +66,15 @@ public class QueryEngine {
     }
 
     /**
-     * Query the index, constructing and returning a list of ResultClass objects.
+     * Query the index, returning the title of the top page
+     * This also prints the top page's name and score for debugging purposes
      * @param querystr the query string
      * @return
      */
     public String queryIndex(String querystr) {
        String ans = "";
+
+       // apply stemming or lemmatization if flagged
         if(stem){
             String stemmed = "";
             for(String word: querystr.split("\\s+")){
@@ -85,16 +89,17 @@ public class QueryEngine {
            querystr = String.join(" ", query.lemmas().toArray(new String[0]));
            System.out.println("QUERY: " + querystr);
         }
+
         try {
             Query q = parser.parse(QueryParser.escape(querystr));
             int hitsPerPage = 10;
             TopDocs docs = search.search(q, hitsPerPage);
             ScoreDoc[] hits = docs.scoreDocs;
 
-            // change similarity from default
+            // change similarity from default, if flagged
             if(changeSimilarity) search.setSimilarity(new ClassicSimilarity());
 
-            // put results in list of ResultClass objects
+            // if there was at least one result, check it out
             if(hits.length > 0){
                 int docId = hits[0].doc;
                 Document d = search.doc(docId);
@@ -109,6 +114,13 @@ public class QueryEngine {
         return ans;
     }
 
+    /**
+     * Constructs the index on disk
+     * @param directory the directory to read data from
+     * @param index the directory object to write the index to
+     * @param config the configuration information for the index writer
+     * @throws IOException
+     */
     private void readInData(String directory, Directory index, IndexWriterConfig config) throws IOException{
         File f = new File(directory);
         File[] datafiles = f.listFiles();
@@ -124,9 +136,10 @@ public class QueryEngine {
                 String[] tokens;
                 while (inputScanner.hasNextLine()) {
                     line = inputScanner.nextLine();
-                    if(line.startsWith("[[")){
+                    if(line.startsWith("[[")){ // start of new article, index the previous one
                         if(fulltext != ""){
 
+                            // lemmatize if necessary
                             if(lemmatize){
                                 edu.stanford.nlp.simple.Document doc = new edu.stanford.nlp.simple.Document(fulltext);
                                 String lemmas = "";
@@ -140,12 +153,12 @@ public class QueryEngine {
                         }
                         fulltext = "";
                         currTitle = line.trim();
-                        currTitle = currTitle.substring(2, currTitle.length() - 2);
+                        currTitle = currTitle.substring(2, currTitle.length() - 2); //remove [[ ]] from title
                         System.out.println(currTitle);
                     } else{
+                        // stem if necessary, add to current document
                         if(stem) {
                             stemmed = "";
-
                             stemmer.setCurrent(line);
                             stemmer.stem();
                             for (String word : line.split("\\s+")) {
@@ -157,7 +170,6 @@ public class QueryEngine {
                         } else fulltext = fulltext + line + "\n";
                     }
                 }
-                inputScanner.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -166,7 +178,7 @@ public class QueryEngine {
     }
 
     /**
-     * Constructs an index on disk based on the input files
+     * Constructs an index on disk based on the input files, calling readInData to do the bulk of the file parsing
      * Follows the Lucene in 5 minutes tutorial.
      */
     private void buildIndex() {
@@ -177,12 +189,14 @@ public class QueryEngine {
         try{
             index = new SimpleFSDirectory(Paths.get("/home/abertsch/projects/wikiwatson/index"));
 
-        IndexWriterConfig config = new IndexWriterConfig(analyzer);
-        parser = new QueryParser("text", analyzer);
-        readInData("/home/abertsch/projects/wikiwatson/data", index, config);
-        IndexReader reader = DirectoryReader.open(index);
-        search = new IndexSearcher(reader);
-        if(changeSimilarity) search.setSimilarity(new ClassicSimilarity());
+            IndexWriterConfig config = new IndexWriterConfig(analyzer);
+            parser = new QueryParser("text", analyzer);
+            readInData("/home/abertsch/projects/wikiwatson/data", index, config);
+            IndexReader reader = DirectoryReader.open(index);
+            search = new IndexSearcher(reader);
+
+            // update similarity, if flagged
+            if(changeSimilarity) search.setSimilarity(new ClassicSimilarity());
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -190,15 +204,20 @@ public class QueryEngine {
         indexExists = true;
     }
 
+    /**
+     * Query the index for all 100 Jeopardy questions and return the number of correct answers.
+     * @return the number of correct answers
+     */
     public int queryAll() {
         System.out.println("in queryAll");
         int correct = 0;
-        int numFound = 0;
+        int numFound = 0; // number of questions processed
         String category = null, query = null;
         String answer = null;
-        boolean inMiddle = false;
+
         try (Scanner readIn = new Scanner(new File(this.questions))) {
             while (readIn.hasNextLine() && numFound != 100) {
+                // read in a question part
                 if (category == null) {
                     category = readIn.nextLine();
                 } else if (query == null) {
@@ -207,7 +226,7 @@ public class QueryEngine {
                     System.out.println(query);
                     answer = readIn.nextLine();
                 } else {
-                    readIn.nextLine();
+                    readIn.nextLine(); // skip empty line
                     String claim = queryIndex(query + " " + category);
                     for(String option: answer.split("[|]")){
                         if(claim.equals(option)) {
@@ -219,6 +238,7 @@ public class QueryEngine {
                     }
                     System.out.println("\n");
 
+                    // reset to prep for next question
                     category = null;
                     query = null;
                     answer = null;
@@ -245,9 +265,13 @@ public class QueryEngine {
         writer.addDocument(doc);
     }
 
+    /**
+     * Entrypoint; constructs index (if not already built) and runs the queries for all documents
+     * @param args
+     */
     public static void main(String[] args ) {
         QueryEngine q = new QueryEngine("");
-        System.out.println(q.queryAll());
+        System.out.println("NUMBER CORRECT: " + q.queryAll() + "/100");
     }
 
 }
